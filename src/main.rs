@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
     } else {
         &content
     };
-    eprintln!("Finished setup after {:?}", start.elapsed());
+    eprintln!("Setup took {:?}", start.elapsed());
     let start_parsing = std::time::Instant::now();
     let registry = content_slice
         .par_split(|&b| b == b'\n')
@@ -40,13 +40,13 @@ fn main() -> anyhow::Result<()> {
             a
         });
     let elapsed = start_parsing.elapsed();
-    eprintln!("Finished aggregating after {:?}", elapsed);
+    eprintln!("Aggregation took {:?}", elapsed);
 
     let start_sorting = std::time::Instant::now();
     let mut name_aggregations = registry.into_iter().collect::<Vec<_>>();
     name_aggregations.sort_unstable_by_key(|&(name, _)| name);
     let elapsed = start_sorting.elapsed();
-    eprintln!("Finished sorting after {:?}", elapsed);
+    eprintln!("Sorting took {:?}", elapsed);
 
     let handle = std::io::stdout().lock();
     let mut writer = BufWriter::new(handle);
@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
     }
     writer.write_all(b"}")?;
     let elapsed = start_writing.elapsed();
-    eprintln!("Finished writing after {:?}", elapsed);
+    eprintln!("Writing took {:?}", elapsed);
 
     Ok(())
 }
