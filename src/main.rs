@@ -11,6 +11,7 @@ use fxhash::FxHashMap;
 use itertools::Itertools;
 
 const PARALLELISM: usize = 8;
+const BUFFER_SIZE: usize = 128 * 1024 * 1024;
 
 fn main() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
@@ -18,8 +19,8 @@ fn main() -> anyhow::Result<()> {
     let mut file = File::open(&args.input_file)?;
     eprintln!("Setup took {:?}", start.elapsed());
     let start_parsing = std::time::Instant::now();
-    let mut working_buffer = vec![0_u8; 64 * 1024 * 1024];
-    let mut loading_buffer = vec![0_u8; 64 * 1024 * 1024];
+    let mut working_buffer = vec![0_u8; BUFFER_SIZE];
+    let mut loading_buffer = vec![0_u8; BUFFER_SIZE];
     let mut registries: [Registry; PARALLELISM] = array::from_fn(|_| Registry::default());
     file.read(&mut working_buffer)?;
     loop {
