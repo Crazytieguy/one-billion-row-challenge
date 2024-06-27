@@ -1,5 +1,5 @@
 # One Billion Row Challenge
 
-My solution to the [one billion row challenge](https://github.com/gunnarmorling/1brc). I wanted to see what the performance would be with mostly idiomatic use of popular crates and some light optimization.
+My solution to the [one billion row challenge](https://github.com/gunnarmorling/1brc).
 
-I'm a bit disappointed with `par_split`, as it seems to only use up two of my cores. Overall time is ~18 seconds.
+On my 16GB RAM laptop reading the file normally turns out to be more performant than memory mapping, and I'm able to basically just be limited by my disk speed (~5 seconds).

@@ -1,50 +1,77 @@
 use std::{
+    array,
     fs::File,
-    io::{BufWriter, Write},
+    io::{BufWriter, Read, Write},
     path::PathBuf,
+    thread,
 };
 
 use clap::Parser;
 use fxhash::FxHashMap;
-use memmap2::Mmap;
-use rayon::{iter::ParallelIterator, slice::ParallelSlice};
+use itertools::Itertools;
+
+const PARALLELISM: usize = 8;
 
 fn main() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let args = Args::parse();
-    let file = File::open(&args.input_file)?;
-    let content = unsafe { Mmap::map(&file)? };
-    let content_slice = if content[content.len() - 1] == b'\n' {
-        &content[..content.len() - 1]
-    } else {
-        &content
-    };
+    let mut file = File::open(&args.input_file)?;
     eprintln!("Setup took {:?}", start.elapsed());
     let start_parsing = std::time::Instant::now();
-    let registry = content_slice
-        .par_split(|&b| b == b'\n')
-        .fold(Registry::default, |mut registry, line| {
-            let (name, temp) = parse_line(line);
-            registry
-                .entry(name)
-                .or_insert_with(Aggregation::new)
-                .update(temp);
-            registry
-        })
-        .reduce(Registry::default, |mut a, b| {
-            b.into_iter().for_each(|(name, aggregation)| {
-                a.entry(name)
-                    .or_insert_with(Aggregation::new)
-                    .merge(&aggregation);
-            });
+    let mut working_buffer = vec![0_u8; 64 * 1024 * 1024];
+    let mut loading_buffer = vec![0_u8; 64 * 1024 * 1024];
+    let mut registries: [Registry; PARALLELISM] = array::from_fn(|_| Registry::default());
+    file.read(&mut working_buffer)?;
+    loop {
+        let (remainder, to_process) = working_buffer
+            .rsplitn(2, |&b| b == b'\n')
+            .collect_tuple()
+            .ok_or_else(|| anyhow::anyhow!("No newline found in working buffer"))?;
+        let chunks = chunk_at_newlines(to_process);
+        let read = thread::scope(|s| {
+            chunks
+                .iter()
+                .zip(registries.iter_mut())
+                .for_each(|(chunk, mut registry)| {
+                    s.spawn(move || {
+                        let mut start = 0;
+                        for end in memchr::memchr_iter(b'\n', chunk).chain([chunk.len()]) {
+                            process_line(&mut registry, &chunk[start..end]);
+                            start = end + 1;
+                        }
+                    });
+                });
+            loading_buffer[..remainder.len()].copy_from_slice(remainder);
+            file.read(&mut loading_buffer[remainder.len()..])
+        })?;
+        if read == 0 {
+            break;
+        }
+        if read + remainder.len() < loading_buffer.len() {
+            loading_buffer.drain((read + remainder.len())..);
+        }
+        std::mem::swap(&mut working_buffer, &mut loading_buffer);
+    }
+    let registry = registries
+        .into_iter()
+        .reduce(|mut a, b| {
+            for (name, aggregation) in b {
+                match a.get_mut(&name) {
+                    Some(existing) => existing.merge(&aggregation),
+                    None => {
+                        a.insert(name, aggregation);
+                    }
+                }
+            }
             a
-        });
+        })
+        .expect("At least one registry");
     let elapsed = start_parsing.elapsed();
     eprintln!("Aggregation took {:?}", elapsed);
 
     let start_sorting = std::time::Instant::now();
     let mut name_aggregations = registry.into_iter().collect::<Vec<_>>();
-    name_aggregations.sort_unstable_by_key(|&(name, _)| name);
+    name_aggregations.sort_unstable_by(|(name1, _), (name2, _)| name1.cmp(name2));
     let elapsed = start_sorting.elapsed();
     eprintln!("Sorting took {:?}", elapsed);
 
@@ -64,6 +91,34 @@ fn main() -> anyhow::Result<()> {
     eprintln!("Writing took {:?}", elapsed);
 
     Ok(())
+}
+
+fn chunk_at_newlines(to_chunk: &[u8]) -> [&[u8]; PARALLELISM] {
+    let chunk_size = to_chunk.len() / PARALLELISM;
+    let mut start = 0;
+    array::from_fn(|i| {
+        let end = if i == PARALLELISM - 1 {
+            to_chunk.len()
+        } else {
+            memchr::memrchr(b'\n', &to_chunk[..(start + chunk_size)])
+                .expect("There should always be a newline")
+        };
+        let ret = &to_chunk[start..end];
+        start = end + 1;
+        ret
+    })
+}
+
+fn process_line(registry: &mut Registry, line: &[u8]) {
+    let (name, temp) = parse_line(line);
+    match registry.get_mut(name) {
+        Some(aggregation) => aggregation.update(temp),
+        None => {
+            let mut aggregation = Aggregation::new();
+            aggregation.update(temp);
+            registry.insert(name.to_vec(), aggregation);
+        }
+    }
 }
 
 fn parse_line(line: &[u8]) -> (&[u8], i32) {
@@ -113,7 +168,7 @@ fn push_float(writer: &mut impl Write, mut value: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
-type Registry<'a> = FxHashMap<&'a [u8], Aggregation>;
+type Registry = FxHashMap<Vec<u8>, Aggregation>;
 
 struct Aggregation {
     min: i32,
