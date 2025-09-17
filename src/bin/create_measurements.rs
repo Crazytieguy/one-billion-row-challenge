@@ -1,3 +1,4 @@
+#![warn(clippy::pedantic)]
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use humansize::{format_size, BINARY};
@@ -26,13 +27,17 @@ struct Args {
 }
 
 fn build_weather_station_name_list(input_file: &PathBuf) -> Result<Vec<String>> {
-    let file = File::open(input_file)
-        .with_context(|| format!("Failed to open weather stations file: {:?}", input_file))?;
+    let file = File::open(input_file).with_context(|| {
+        format!(
+            "Failed to open weather stations file: {}",
+            input_file.display()
+        )
+    })?;
     let reader = BufReader::new(file);
 
     Ok(reader
         .lines()
-        .filter_map(Result::ok)
+        .map_while(Result::ok)
         .filter(|line| !line.contains('#'))
         .filter_map(|line| {
             let (name, _) = line.split_once(';')?;
@@ -43,10 +48,13 @@ fn build_weather_station_name_list(input_file: &PathBuf) -> Result<Vec<String>> 
         .collect())
 }
 
+#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_sign_loss)]
 fn estimate_file_size(weather_station_names: &[String], num_rows_to_create: usize) -> String {
-    let total_name_bytes: usize = weather_station_names.iter().map(|s| s.len()).sum();
+    let total_name_bytes: usize = weather_station_names.iter().map(String::len).sum();
     let avg_name_bytes = total_name_bytes as f64 / weather_station_names.len() as f64;
-    let avg_temp_bytes = 4.400200100050025;
+    let avg_temp_bytes = 4.400_200_100_050_025;
     let avg_line_length = avg_name_bytes + avg_temp_bytes + 2.0;
     let estimated_size = num_rows_to_create as f64 * avg_line_length;
 
@@ -70,8 +78,12 @@ fn build_test_data(
 
     eprintln!("Building test data...");
 
-    let file = File::create(output_file)
-        .with_context(|| format!("Failed to create measurements file: {:?}", output_file))?;
+    let file = File::create(output_file).with_context(|| {
+        format!(
+            "Failed to create measurements file: {}",
+            output_file.display()
+        )
+    })?;
     let mut writer = BufWriter::new(file);
 
     let pb = ProgressBar::new(num_rows_to_create as u64);
@@ -81,8 +93,7 @@ fn build_test_data(
             .choose(&mut rng)
             .ok_or_else(|| anyhow!("Failed to choose a random station"))?;
         let temp = rng.gen_range(coldest_temp..=hottest_temp);
-        writeln!(writer, "{};{:.1}", station, temp)
-            .context("Failed to write to measurements file")?;
+        writeln!(writer, "{station};{temp:.1}").context("Failed to write to measurements file")?;
 
         if i % 10000 == 0 {
             pb.set_position(i as u64);
@@ -96,9 +107,12 @@ fn build_test_data(
     let file_size = std::fs::metadata(output_file)?.len();
     let human_file_size = format_size(file_size, BINARY);
 
-    eprintln!("Test data successfully written to {:?}", output_file);
-    eprintln!("Actual file size: {}", human_file_size);
-    eprintln!("Elapsed time: {:?}", elapsed_time);
+    eprintln!(
+        "Test data successfully written to {}",
+        output_file.display()
+    );
+    eprintln!("Actual file size: {human_file_size}");
+    eprintln!("Elapsed time: {elapsed_time:?}");
 
     Ok(())
 }

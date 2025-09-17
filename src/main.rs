@@ -1,3 +1,4 @@
+#![warn(clippy::pedantic)]
 use std::{
     array,
     fs::File,
@@ -22,7 +23,7 @@ fn main() -> anyhow::Result<()> {
     let mut working_buffer = vec![0_u8; BUFFER_SIZE];
     let mut loading_buffer = vec![0_u8; BUFFER_SIZE];
     let mut registries: [Registry; PARALLELISM] = array::from_fn(|_| Registry::default());
-    file.read(&mut working_buffer)?;
+    file.read_exact(&mut working_buffer)?;
     loop {
         let (remainder, to_process) = working_buffer
             .rsplitn(2, |&b| b == b'\n')
@@ -33,11 +34,11 @@ fn main() -> anyhow::Result<()> {
             chunks
                 .iter()
                 .zip(registries.iter_mut())
-                .for_each(|(chunk, mut registry)| {
+                .for_each(|(chunk, registry)| {
                     s.spawn(move || {
                         let mut start = 0;
                         for end in memchr::memchr_iter(b'\n', chunk).chain([chunk.len()]) {
-                            process_line(&mut registry, &chunk[start..end]);
+                            process_line(registry, &chunk[start..end]);
                             start = end + 1;
                         }
                     });
@@ -68,13 +69,13 @@ fn main() -> anyhow::Result<()> {
         })
         .expect("At least one registry");
     let elapsed = start_parsing.elapsed();
-    eprintln!("Aggregation took {:?}", elapsed);
+    eprintln!("Aggregation took {elapsed:?}");
 
     let start_sorting = std::time::Instant::now();
     let mut name_aggregations = registry.into_iter().collect::<Vec<_>>();
     name_aggregations.sort_unstable_by(|(name1, _), (name2, _)| name1.cmp(name2));
     let elapsed = start_sorting.elapsed();
-    eprintln!("Sorting took {:?}", elapsed);
+    eprintln!("Sorting took {elapsed:?}");
 
     let handle = std::io::stdout().lock();
     let mut writer = BufWriter::new(handle);
@@ -89,7 +90,7 @@ fn main() -> anyhow::Result<()> {
     }
     writer.write_all(b"}")?;
     let elapsed = start_writing.elapsed();
-    eprintln!("Writing took {:?}", elapsed);
+    eprintln!("Writing took {elapsed:?}");
 
     Ok(())
 }
@@ -112,13 +113,12 @@ fn chunk_at_newlines(to_chunk: &[u8]) -> [&[u8]; PARALLELISM] {
 
 fn process_line(registry: &mut Registry, line: &[u8]) {
     let (name, temp) = parse_line(line);
-    match registry.get_mut(name) {
-        Some(aggregation) => aggregation.update(temp),
-        None => {
-            let mut aggregation = Aggregation::new();
-            aggregation.update(temp);
-            registry.insert(name.to_vec(), aggregation);
-        }
+    if let Some(aggregation) = registry.get_mut(name) {
+        aggregation.update(temp);
+    } else {
+        let mut aggregation = Aggregation::new();
+        aggregation.update(temp);
+        registry.insert(name.to_vec(), aggregation);
     }
 }
 
@@ -130,9 +130,10 @@ fn parse_line(line: &[u8]) -> (&[u8], i32) {
         [name @ .., b';', ones, b'.', decimal] => (name, false, b'0', *ones, *decimal),
         _ => panic!("Invalid line format {}", String::from_utf8_lossy(line)),
     };
-    let zero = b'0' as i32;
-    let value =
-        ((tens as i32 - zero) * 100) + ((ones as i32 - zero) * 10) + (decimal as i32 - zero);
+    let zero = i32::from(b'0');
+    let value = ((i32::from(tens) - zero) * 100)
+        + ((i32::from(ones) - zero) * 10)
+        + (i32::from(decimal) - zero);
     if is_negative {
         (name, -value)
     } else {
@@ -155,6 +156,8 @@ fn push_aggregation(
     Ok(())
 }
 
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_sign_loss)]
 fn push_float(writer: &mut impl Write, mut value: i32) -> anyhow::Result<()> {
     if value < 0 {
         writer.write_all(b"-")?;
@@ -202,6 +205,7 @@ impl Aggregation {
         self.count += other.count;
     }
 
+    #[allow(clippy::cast_possible_wrap)]
     fn mean(&self) -> i32 {
         let mean_10 = self.sum * 10 / self.count as i32;
         let remainder = mean_10 % 10;
