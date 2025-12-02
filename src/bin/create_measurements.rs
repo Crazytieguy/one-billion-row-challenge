@@ -1,7 +1,7 @@
 #![warn(clippy::pedantic)]
 use anyhow::{Context, Result};
 use clap::Parser;
-use humansize::{format_size, BINARY};
+use humansize::{BINARY, format_size};
 use indicatif::ProgressBar;
 use rand::prelude::*;
 use rand_distr::Normal;

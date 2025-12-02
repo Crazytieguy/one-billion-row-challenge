@@ -15,10 +15,8 @@ const PARALLELISM: usize = 8;
 const BUFFER_SIZE: usize = 128 * 1024 * 1024;
 
 fn main() -> anyhow::Result<()> {
-    let start = std::time::Instant::now();
     let args = Args::parse();
     let mut file = File::open(&args.input_file)?;
-    eprintln!("Setup took {:?}", start.elapsed());
     let start_parsing = std::time::Instant::now();
     let mut working_buffer = vec![0_u8; BUFFER_SIZE];
     let mut loading_buffer = vec![0_u8; BUFFER_SIZE];
@@ -71,26 +69,20 @@ fn main() -> anyhow::Result<()> {
     let elapsed = start_parsing.elapsed();
     eprintln!("Aggregation took {elapsed:?}");
 
-    let start_sorting = std::time::Instant::now();
     let mut name_aggregations = registry.into_iter().collect::<Vec<_>>();
     name_aggregations.sort_unstable_by(|(name1, _), (name2, _)| name1.cmp(name2));
-    let elapsed = start_sorting.elapsed();
-    eprintln!("Sorting took {elapsed:?}");
 
     let handle = std::io::stdout().lock();
     let mut writer = BufWriter::new(handle);
 
-    let start_writing = std::time::Instant::now();
-    writer.write_all(b"{")?;
+    write!(writer, "{{")?;
     let (first_name, first_aggregation) = name_aggregations.first().unwrap();
-    push_aggregation(&mut writer, first_name, first_aggregation)?;
+    write_station(&mut writer, first_name, first_aggregation)?;
     for (name, aggregation) in &name_aggregations[1..] {
-        writer.write_all(b", ")?;
-        push_aggregation(&mut writer, name, aggregation)?;
+        write!(writer, ", ")?;
+        write_station(&mut writer, name, aggregation)?;
     }
-    writer.write_all(b"}")?;
-    let elapsed = start_writing.elapsed();
-    eprintln!("Writing took {elapsed:?}");
+    write!(writer, "}}")?;
 
     Ok(())
 }
@@ -141,34 +133,19 @@ fn parse_line(line: &[u8]) -> (&[u8], i32) {
     }
 }
 
-fn push_aggregation(
+fn write_station(
     writer: &mut impl Write,
     name: &[u8],
     aggregation: &Aggregation,
 ) -> anyhow::Result<()> {
-    writer.write_all(name)?;
-    writer.write_all(b"=")?;
-    push_float(writer, aggregation.min)?;
-    writer.write_all(b"/")?;
-    push_float(writer, aggregation.mean())?;
-    writer.write_all(b"/")?;
-    push_float(writer, aggregation.max)?;
-    Ok(())
-}
-
-#[allow(clippy::cast_possible_truncation)]
-#[allow(clippy::cast_sign_loss)]
-fn push_float(writer: &mut impl Write, mut value: i32) -> anyhow::Result<()> {
-    if value < 0 {
-        writer.write_all(b"-")?;
-        value = -value;
-    }
-    if value >= 100 {
-        writer.write_all(&[(value / 100) as u8 + b'0'])?;
-    }
-    writer.write_all(&[((value / 10) % 10) as u8 + b'0'])?;
-    writer.write_all(b".")?;
-    writer.write_all(&[(value % 10) as u8 + b'0'])?;
+    let name = str::from_utf8(name)?;
+    write!(
+        writer,
+        "{name}={:.1}/{:.1}/{:.1}",
+        f64::from(aggregation.min) / 10.,
+        f64::from(aggregation.mean()) / 10.,
+        f64::from(aggregation.max) / 10.
+    )?;
     Ok(())
 }
 
